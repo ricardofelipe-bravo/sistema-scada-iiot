@@ -216,6 +216,109 @@ Topic: `industrial/motor/variables`
 
 ---
 
+
+---
+
+## Configuración HiveMQ Cloud
+
+HiveMQ Cloud es el broker MQTT que recibe los datos del ESP32 y los entrega a Python.
+
+### Crear cuenta y cluster gratuito
+
+1. Ve a [console.hivemq.cloud](https://console.hivemq.cloud)
+2. Crea una cuenta gratuita
+3. Click en **"Create new cluster"** → selecciona plan **Free**
+4. Elige la región más cercana (US East o EU)
+5. Espera que el cluster esté activo (~1 minuto)
+
+### Crear credenciales de acceso
+
+1. Dentro del cluster ve a **"Access Management"**
+2. Click en **"Add new credentials"**
+3. Crea un usuario y contraseña — guárdalos
+4. Permiso: **Publicar y Suscribirse**
+5. Click en **Guardar**
+
+### Datos de conexión
+
+Una vez creado el cluster, en la página principal encuentras:
+
+| Parámetro | Dónde encontrarlo | Ejemplo |
+|---|---|---|
+| Host | Página principal del cluster | `xxxx.s1.eu.hivemq.cloud` |
+| Puerto TLS | Siempre es 8883 | `8883` |
+| Usuario | Access Management | el que creaste |
+| Contraseña | Access Management | la que creaste |
+
+### Actualizar credenciales en el firmware
+
+En el archivo `.ino` busca estas líneas y reemplaza con tus datos:
+
+```cpp
+const char* MQTT_HOST = "TU_HOST.s1.eu.hivemq.cloud";
+const char* MQTT_USER = "tu_usuario";
+const char* MQTT_PASS = "tu_contraseña";
+```
+
+### Actualizar credenciales en Python
+
+En `monitor.py` busca:
+
+```python
+MQTT_HOST = "TU_HOST.s1.eu.hivemq.cloud"
+MQTT_USER = "tu_usuario"
+MQTT_PASS = "tu_contraseña"
+```
+
+### Probar la conexión desde el cliente web
+
+1. En tu consola HiveMQ ve a la pestaña **"Cliente web"**
+2. Conecta con tus credenciales
+3. Publica un JSON al topic `industrial/motor/variables`
+4. Verifica que `monitor.py` lo recibe en la terminal
+
+---
+
+## PCB — Nodo Edge IIoT
+
+Diseñada en **KiCad 8** para montaje del nodo de medición de variables eléctricas.
+
+### Componentes
+
+| Componente | Referencia | Función |
+|---|---|---|
+| ESP32 DevKit 38 pines | U1 | Controlador principal |
+| PZEM-004T | J1 | Sensor de variables eléctricas |
+| LED verde | D1 | Indicador WiFi (GPIO23) |
+| LED azul | D2 | Indicador MQTT (GPIO22) |
+| LED rojo | D3 | Indicador Alarma (GPIO21) |
+| Resistencias 330Ω | R1, R2, R3 | Limitación corriente LEDs |
+| Condensador 100µF | C1 | Filtrado alimentación |
+| Condensador 100nF | C2 | Desacople alta frecuencia |
+| DC Jack 5V | J2 | Entrada de alimentación |
+
+### Alimentación
+
+```
+Adaptador 5V DC
+      │
+   DC Jack
+      │
+   ESP32 VIN (pin 19) ──── PZEM-004T VCC
+      │
+   ESP32 interno 3.3V ──── lógica interna
+```
+
+### Archivos KiCad en carpeta `pcb/`
+
+| Archivo | Contenido |
+|---|---|
+| `.kicad_sch` | Esquemático completo con conexiones |
+| `.kicad_pcb` | Layout de la PCB con ruteo |
+| `.kicad_pro` | Proyecto KiCad con configuración |
+
+> Los archivos pueden abrirse directamente con **KiCad 8.0** disponible en [kicad.org](https://www.kicad.org)
+
 ## Capturas del Dashboard
 
 ### Motor apagado — operación normal
