@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema SCADA - Monitor de Variables Eléctricas</title>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="/static/chart.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-panel: #161b22;
+            --bg-card: #1c2128;
+            --accent-blue: #42a5f5;
+            --accent-amber: #ffa726;
+            --accent-green: #66bb6a;
+            --accent-orange: #ef5350;
+            --accent-red: #f44336;
+            --accent-yellow: #ffca28;
+            --border: rgba(99, 130, 167, 0.2);
+            --text-primary: #cdd9e5;
+            --text-muted: #768390;
+            --text-label: #8b949e;
+            --glow-blue: 0 0 16px rgba(66, 165, 245, 0.25);
+            --glow-green: 0 0 16px rgba(102, 187, 106, 0.25);
+            --glow-red: 0 0 16px rgba(244, 67, 54, 0.35);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: 'Rajdhani', sans-serif;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Grid background */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: 
+                linear-gradient(rgba(99,130,167,0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(99,130,167,0.04) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 16px;
+        }
+
+        /* HEADER */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 24px;
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #42a5f5, transparent);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-icon {
+            width: 36px;
+            height: 36px;
+            border: 2px solid #42a5f5;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #42a5f5;
+            font-size: 18px;
+            box-shadow: var(--glow-blue);
+        }
+
+        .header h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: var(--text-primary);
+            text-transform: uppercase;
+        }
+
+        .header h1 span {
+            color: #42a5f5;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .timestamp {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            letter-spacing: 1px;
+        }
+
+        .motor-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 0.85rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            transition: all 0.3s;
+            border: 1px solid;
+        }
+
+        .motor-on {
+            background: rgba(102, 187, 106, 0.1);
+            border-color: #66bb6a;
+            color: #66bb6a;
+            box-shadow: var(--glow-green);
+        }
+
+        .motor-off {
+            background: rgba(244, 67, 54, 0.1);
+            border-color: #f44336;
+            color: #f44336;
+            box-shadow: var(--glow-red);
+        }
+
+        .motor-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* GAUGES ROW */
+        .gauges-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .gauge-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 16px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.3s;
+            min-height: 240px;
+        }
+
+        .gauge-card::after {
+            content: '';
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 2px;
+            background: var(--card-accent, var(--accent-cyan));
+            opacity: 0.6;
+        }
+
+        .gauge-card.alarma {
+            border-color: var(--accent-red);
+            animation: alarmPulse 1s infinite;
+        }
+
+        @keyframes alarmPulse {
+            0%, 100% { border-color: var(--accent-red); }
+            50% { border-color: rgba(255, 23, 68, 0.3); }
+        }
+
+        .gauge-label {
+            font-size: 0.75rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-label);
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        /* SVG Gauge */
+        .gauge-svg {
+            width: 160px;
+            height: 160px;
+            margin-bottom: 4px;
+        }
+
+        .gauge-value-display {
+            text-align: center;
+            position: absolute;
+            bottom: 28px;
+            left: 0; right: 0;
+        }
+
+        .gauge-number {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--card-accent, var(--accent-cyan));
+            line-height: 1;
+        }
+
+        .gauge-unit {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            letter-spacing: 1px;
+            margin-top: 2px;
+        }
+
+        .gauge-card {
+            position: relative;
+        }
+
+        /* ALARM PANEL */
+        .alarm-strip {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .alarm-item {
+            padding: 10px 16px;
+            border-radius: 4px;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 10px;
+            border: 1px solid;
+            transition: all 0.3s;
+            background: var(--bg-card);
+        }
+
+        .alarm-led {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .alarm-info {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .alarm-title {
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+        }
+
+        .alarm-desc {
+            font-size: 0.68rem;
+            letter-spacing: 0.5px;
+            opacity: 0.6;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .alarm-status-tag {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 2px;
+            letter-spacing: 1px;
+            font-weight: 700;
+        }
+
+        .alarm-normal {
+            border-color: rgba(55, 71, 79, 0.6);
+        }
+        .alarm-normal .alarm-led {
+            background: #37474f;
+            box-shadow: none;
+        }
+        .alarm-normal .alarm-title { color: #546e7a; }
+        .alarm-normal .alarm-status-tag {
+            background: rgba(55,71,79,0.3);
+            color: #546e7a;
+        }
+
+        .alarm-ok {
+            border-color: rgba(102, 187, 106, 0.25);
+        }
+        .alarm-ok .alarm-led {
+            background: #66bb6a;
+            box-shadow: 0 0 8px rgba(102,187,106,0.6);
+        }
+        .alarm-ok .alarm-title { color: #a5d6a7; }
+        .alarm-ok .alarm-status-tag {
+            background: rgba(102,187,106,0.1);
+            color: #66bb6a;
+        }
+
+        .alarm-active {
+            border-color: var(--accent-red);
+            background: rgba(255,23,68,0.05);
+            animation: alarmPulse 0.8s infinite;
+        }
+        .alarm-active .alarm-led {
+            background: var(--accent-red);
+            box-shadow: 0 0 10px rgba(255,23,68,0.8);
+            animation: pulse 0.5s infinite;
+        }
+        .alarm-active .alarm-title { color: #ff6b6b; }
+        .alarm-active .alarm-status-tag {
+            background: rgba(255,23,68,0.15);
+            color: var(--accent-red);
+        }
+
+        /* CHARTS ROW */
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .chart-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 20px;
+            position: relative;
+        }
+
+        .chart-panel::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--panel-accent, var(--accent-cyan)), transparent);
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+
+        .chart-title {
+            font-size: 0.8rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-label);
+            font-weight: 600;
+        }
+
+        .chart-badges {
+            display: flex;
+            gap: 8px;
+        }
+
+        .chart-badge {
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 2px;
+            letter-spacing: 1px;
+        }
+
+        .chart-panel canvas {
+            max-height: 180px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <!-- HEADER -->
+    <div class="header">
+        <div class="header-left">
+            <div class="header-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="13 2 13 9 20 9"/><polyline points="11 22 11 15 4 15"/>
+                    <path d="M20 9L13 2 4 9v13h16V9z" opacity="0.3" fill="currentColor" stroke="none"/>
+                    <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" opacity="0.8" stroke="none"/>
+                </svg>
+            </div>
+            <div>
+                <div style="font-size:0.65rem;letter-spacing:3px;color:var(--text-muted);text-transform:uppercase;margin-bottom:2px">Sistema de Control Industrial</div>
+                <h1>Monitor de <span>Variables Eléctricas</span></h1>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="timestamp" id="clock">--:--:--</div>
+            <div id="motor-badge" class="motor-badge motor-off">
+                <span class="motor-dot"></span>
+                <span id="motor-text">MOTOR OFF</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- GAUGES -->
+    <div class="gauges-row">
+        <!-- Voltaje -->
+        <div class="gauge-card" id="card-v" style="--card-accent: #42a5f5">
+            <div class="gauge-label">Voltaje de Línea</div>
+            <svg class="gauge-svg" viewBox="0 0 200 200">
+                <circle cx="100" cy="100" r="80" fill="none" stroke="#161b22" stroke-width="1"/>
+                <path d="M 26,131 A 80,80 0 1,1 174,131" fill="none" stroke="#21262d" stroke-width="14" stroke-linecap="round"/>
+                <path id="gauge-arc-v" d="M 26,131 A 80,80 0 1,1 174,131" fill="none" stroke="#42a5f5" stroke-width="14" stroke-linecap="round"
+                    stroke-dasharray="0 314" style="transition:stroke-dasharray 0.6s ease; filter: drop-shadow(0 0 5px rgba(66,165,245,0.6));"/>
+                <line id="needle-v" x1="100" y1="100" x2="100" y2="30" stroke="#42a5f5" stroke-width="2.5" stroke-linecap="round"
+                    transform="rotate(-112.5, 100, 100)" style="transition:transform 0.6s ease;"/>
+                <circle cx="100" cy="100" r="6" fill="#42a5f5"/>
+                <circle cx="100" cy="100" r="3" fill="#0d1117"/>
+                <text x="22" y="148" fill="#768390" font-size="11" font-family="Share Tech Mono" text-anchor="middle">200</text>
+                <text x="178" y="148" fill="#768390" font-size="11" font-family="Share Tech Mono" text-anchor="middle">250</text>
+            </svg>
+            <div class="gauge-value-display">
+                <div class="gauge-number" id="val-v">--</div>
+                <div class="gauge-unit">VOLTIOS (V)</div>
+            </div>
+        </div>
+
+        <!-- Corriente -->
+        <div class="gauge-card" id="card-i" style="--card-accent: #ffa726">
+            <div class="gauge-label">Corriente de Carga</div>
+            <svg class="gauge-svg" viewBox="0 0 200 200">
+                <circle cx="100" cy="100" r="80" fill="none" stroke="#161b22" stroke-width="1"/>
+                <path d="M 26,131 A 80,80 0 1,1 174,131" fill="none" stroke="#21262d" stroke-width="14" stroke-linecap="round"/>
+                <path id="gauge-arc-i" d="M 26,131 A 80,80 0 1,1 174,131" fill="none" stroke="#ffa726" stroke-width="14" stroke-linecap="round"
+                    stroke-dasharray="0 314" style="transition:stroke-dasharray 0.6s ease; filter: drop-shadow(0 0 5px rgba(255,167,38,0.6));"/>
+                <line id="needle-i" x1="100" y1="100" x2="100" y2="30" stroke="#ffa726" stroke-width="2.5" stroke-linecap="round"
+                    transform="rotate(-112.5, 100, 100)" style="transition:transform 0.6s ease;"/>
+                <circle cx="100" cy="100" r="6" fill="#ffa726"/>
+                <circle cx="100" cy="100" r="3" fill="#0d1117"/>
+                <text x="22" y="148" fill="#768390" font-size="11" font-family="Share Tech Mono" text-anchor="middle">0</text>
+                <text x="178" y="148" fill="#768390" font-size="11" font-family="Share Tech Mono" text-anchor="middle">60</text>
+            </svg>
+            <div class="gauge-value-display">
+                <div class="gauge-number" id="val-i">--</div>
+                <div class="gauge-unit">AMPERIOS (A)</div>
+            </div>
+        </div>
+
+        <!-- Potencia -->
+        <div class="gauge-card" id="card-p" style="--card-accent: #66bb6a">
+            <div class="gauge-label">Potencia Activa</div>
+            <svg class="gauge-svg" viewBox="0 0 200 200">
+                <circle cx="100" cy="100" r="80" fill="none" stroke="#161b22" stroke-width="1"/>
+                <path d="M 26,131 A 80,80 0 1,1 174,131" fill="none" stroke="#21262d" stroke-width="14" stroke-linecap="round"/>
+                <path id="gauge-arc-p" d="M 26,131 A 80,80 0 1,1 174,131" fill="none" stroke="#66bb6a" stroke-width="14" stroke-linecap="round"
+                    stroke-dasharray="0 314" style="transition:stroke-dasharray 0.6s ease; filter: drop-shadow(0 0 5px rgba(102,187,106,0.6));"/>
+                <line id="needle-p" x1="100" y1="100" x2="100" y2="30" stroke="#66bb6a" stroke-width="2.5" stroke-linecap="round"
+                    transform="rotate(-112.5, 100, 100)" style="transition:transform 0.6s ease;"/>
+                <circle cx="100" cy="100" r="6" fill="#66bb6a"/>
+                <circle cx="100" cy="100" r="3" fill="#0d1117"/>
+                <text x="22" y="148" fill="#768390" font-size="11" font-family="Share Tech Mono" text-anchor="middle">0</text>
+                <text x="178" y="148" fill="#768390" font-size="11" font-family="Share Tech Mono" text-anchor="middle">12K</text>
+            </svg>
+            <div class="gauge-value-display">
+                <div class="gauge-number" id="val-p">--</div>
+                <div class="gauge-unit">VATIOS (W)</div>
+            </div>
+        </div>
+
+        <!-- Temperatura -->
+        <div class="gauge-card" id="card-t" style="--card-accent: #ef5350">
+            <div class="gauge-label">Temperatura</div>
+            <svg class="gauge-svg" viewBox="0 0 200 200">
+                <circle cx="100" cy="100" r="80" fill="none" stroke="#161b22" stroke-width="1"/>
+                <path d="M 26,131 A 80,80 0 1,1 174,131" fill="none" stroke="#21262d" stroke-width="14" stroke-linecap="round"/>
+                <path id="gauge-arc-t" d="M 26,131 A 80,80 0 1,1 174,131" fill="none" stroke="#ef5350" stroke-width="14" stroke-linecap="round"
+                    stroke-dasharray="0 314" style="transition:stroke-dasharray 0.6s ease; filter: drop-shadow(0 0 5px rgba(239,83,80,0.6));"/>
+                <line id="needle-t" x1="100" y1="100" x2="100" y2="30" stroke="#ef5350" stroke-width="2.5" stroke-linecap="round"
+                    transform="rotate(-112.5, 100, 100)" style="transition:transform 0.6s ease;"/>
+                <circle cx="100" cy="100" r="6" fill="#ef5350"/>
+                <circle cx="100" cy="100" r="3" fill="#0d1117"/>
+                <text x="22" y="148" fill="#768390" font-size="11" font-family="Share Tech Mono" text-anchor="middle">20</text>
+                <text x="178" y="148" fill="#768390" font-size="11" font-family="Share Tech Mono" text-anchor="middle">90</text>
+            </svg>
+            <div class="gauge-value-display">
+                <div class="gauge-number" id="val-t">--</div>
+                <div class="gauge-unit">GRADOS (°C)</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ALARM PANEL -->
+    <div class="alarm-strip">
+        <div id="alarm-v" class="alarm-item alarm-normal">
+            <span class="alarm-led"></span>
+            <div class="alarm-info">
+                <span class="alarm-title">Voltaje de Línea</span>
+                <span class="alarm-desc" id="alarm-v-desc">Sin eventos</span>
+            </div>
+            <span class="alarm-status-tag" id="alarm-v-tag">OK</span>
+        </div>
+        <div id="alarm-i" class="alarm-item alarm-normal">
+            <span class="alarm-led"></span>
+            <div class="alarm-info">
+                <span class="alarm-title">Corriente de Carga</span>
+                <span class="alarm-desc" id="alarm-i-desc">Sin eventos</span>
+            </div>
+            <span class="alarm-status-tag" id="alarm-i-tag">OK</span>
+        </div>
+        <div id="alarm-t" class="alarm-item alarm-normal">
+            <span class="alarm-led"></span>
+            <div class="alarm-info">
+                <span class="alarm-title">Temperatura</span>
+                <span class="alarm-desc" id="alarm-t-desc">Sin eventos</span>
+            </div>
+            <span class="alarm-status-tag" id="alarm-t-tag">OK</span>
+        </div>
+    </div>
+
+    <!-- CHARTS -->
+    <div class="charts-row">
+        <div class="chart-panel" style="--panel-accent: #42a5f5">
+            <div class="chart-header">
+                <div class="chart-title">Voltaje &amp; Corriente — Tendencia</div>
+                <div class="chart-badges">
+                    <span class="chart-badge" style="background:rgba(66,165,245,0.1);color:#42a5f5">V</span>
+                    <span class="chart-badge" style="background:rgba(255,167,38,0.1);color:#ffa726">A</span>
+                </div>
+            </div>
+            <canvas id="chart-vi"></canvas>
+        </div>
+        <div class="chart-panel" style="--panel-accent: #66bb6a">
+            <div class="chart-header">
+                <div class="chart-title">Potencia &amp; Temperatura — Tendencia</div>
+                <div class="chart-badges">
+                    <span class="chart-badge" style="background:rgba(102,187,106,0.1);color:#66bb6a">W</span>
+                    <span class="chart-badge" style="background:rgba(239,83,80,0.1);color:#ef5350">°C</span>
+                </div>
+            </div>
+            <canvas id="chart-pt"></canvas>
+        </div>
+    </div>
+
+    <!-- HISTORIAL DE ALARMAS -->
+    <div style="margin-top: 12px;">
+        <div class="chart-panel" style="--panel-accent: #f44336">
+            <div class="chart-header">
+                <div class="chart-title">Historial de Eventos — Alarmas Registradas</div>
+                <span id="alarm-count" style="font-family:'Share Tech Mono',monospace;font-size:0.7rem;padding:2px 10px;border-radius:2px;background:rgba(244,67,54,0.1);color:#f44336;letter-spacing:1px;">0 EVENTOS</span>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:0.8rem;">
+                <thead>
+                    <tr style="border-bottom:1px solid rgba(99,130,167,0.2);">
+                        <th style="padding:8px;text-align:left;color:#8b949e;letter-spacing:1px;font-weight:600;text-transform:uppercase;font-size:0.7rem;">Timestamp</th>
+                        <th style="padding:8px;text-align:center;color:#8b949e;letter-spacing:1px;font-weight:600;text-transform:uppercase;font-size:0.7rem;">Voltaje (V)</th>
+                        <th style="padding:8px;text-align:center;color:#8b949e;letter-spacing:1px;font-weight:600;text-transform:uppercase;font-size:0.7rem;">Corriente (A)</th>
+                        <th style="padding:8px;text-align:center;color:#8b949e;letter-spacing:1px;font-weight:600;text-transform:uppercase;font-size:0.7rem;">Temp (°C)</th>
+                        <th style="padding:8px;text-align:center;color:#8b949e;letter-spacing:1px;font-weight:600;text-transform:uppercase;font-size:0.7rem;">Tipo de Alarma</th>
+                    </tr>
+                </thead>
+                <tbody id="alarm-tbody">
+                    <tr>
+                        <td colspan="5" style="padding:16px;text-align:center;color:#768390;font-family:'Share Tech Mono',monospace;font-size:0.75rem;">Sin eventos registrados</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<script>
+// Gauge helper — 225 degree arc, length = 314
+function updateGauge(id, value, min, max) {
+    const pct = Math.min(Math.max((value - min) / (max - min), 0), 1);
+    const totalLen = 314;
+    const filled = pct * totalLen;
+    const arc = document.getElementById('gauge-arc-' + id);
+    if (arc) {
+        arc.setAttribute('stroke-dasharray', filled + ' ' + (totalLen - filled));
+        
+    }
+    const needle = document.getElementById('needle-' + id);
+    if (needle) {
+        const angle = -112.5 + pct * 225;
+        needle.setAttribute('transform', `rotate(${angle}, 100, 100)`);
+    }
+}
+
+// Charts
+const chartConfig = (color1, color2, label1, label2) => ({
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [
+            {
+                label: label1,
+                data: [],
+                borderColor: color1,
+                backgroundColor: color1 + '18',
+                borderWidth: 2,
+                tension: 0.4,
+                pointRadius: 0,
+                fill: true,
+                yAxisID: 'y'
+            },
+            {
+                label: label2,
+                data: [],
+                borderColor: color2,
+                backgroundColor: color2 + '18',
+                borderWidth: 2,
+                tension: 0.4,
+                pointRadius: 0,
+                fill: true,
+                yAxisID: 'y1'
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        animation: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+            y: {
+                ticks: { color: '#546e7a', font: { size: 10 } },
+                grid: { color: 'rgba(99,130,167,0.08)' }
+            },
+            y1: {
+                position: 'right',
+                ticks: { color: '#546e7a', font: { size: 10 } },
+                grid: { display: false }
+            },
+            x: {
+                ticks: { color: '#546e7a', font: { size: 9 }, maxTicksLimit: 8 },
+                grid: { color: 'rgba(99,130,167,0.08)' }
+            }
+        },
+        plugins: {
+            legend: {
+                labels: { color: '#78909c', font: { size: 10, family: 'Rajdhani' }, boxWidth: 12 }
+            }
+        }
+    }
+});
+
+const chartVI = new Chart(document.getElementById('chart-vi'), chartConfig('#42a5f5', '#ffa726', 'Voltaje (V)', 'Corriente (A)'));
+const chartPT = new Chart(document.getElementById('chart-pt'), chartConfig('#66bb6a', '#ef5350', 'Potencia (W)', 'Temperatura (°C)'));
+
+// Clock
+setInterval(() => {
+    document.getElementById('clock').textContent = new Date().toLocaleTimeString('es-CO');
+}, 1000);
+
+// Update dashboard
+function actualizarDashboard() {
+    fetch('/api/datos')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.length) return;
+            const u = data[0];
+
+            // Gauges
+            document.getElementById('val-v').textContent = u.voltaje.toFixed(1);
+            document.getElementById('val-i').textContent = u.corriente.toFixed(1);
+            document.getElementById('val-p').textContent = u.potencia.toFixed(0);
+            document.getElementById('val-t').textContent = u.temperatura.toFixed(1);
+
+            updateGauge('v', u.voltaje, 200, 250);
+            updateGauge('i', u.corriente, 0, 60);
+            updateGauge('p', u.potencia, 0, 12000);
+            updateGauge('t', u.temperatura, 20, 90);
+
+            // Motor
+            const mb = document.getElementById('motor-badge');
+            document.getElementById('motor-text').textContent = u.estado_motor ? 'MOTOR ON' : 'MOTOR OFF';
+            mb.className = 'motor-badge ' + (u.estado_motor ? 'motor-on' : 'motor-off');
+
+            // Alarmas
+            function setAlarm(id, activa, titulo, msgOk, msgAlarm) {
+                const el = document.getElementById('alarm-' + id);
+                const desc = document.getElementById('alarm-' + id + '-desc');
+                const tag = document.getElementById('alarm-' + id + '-tag');
+                el.className = 'alarm-item ' + (activa ? 'alarm-active' : 'alarm-ok');
+                if (desc) desc.textContent = activa ? msgAlarm : msgOk;
+                if (tag) tag.textContent = activa ? 'ALARMA' : 'OK';
+            }
+
+            setAlarm('v', u.alarma_voltaje, 'Voltaje de Línea', 'Operación normal', 'Sobrevoltaje detectado');
+            setAlarm('i', u.alarma_corriente, 'Corriente de Carga', 'Operación normal', 'Sobrecorriente detectada');
+            setAlarm('t', u.alarma_temperatura, 'Temperatura', 'Operación normal', 'Sobretemperatura detectada');
+
+            // Cards alarma highlight
+            document.getElementById('card-v').className = 'gauge-card' + (u.alarma_voltaje ? ' alarma' : '');
+            document.getElementById('card-i').className = 'gauge-card' + (u.alarma_corriente ? ' alarma' : '');
+            document.getElementById('card-t').className = 'gauge-card' + (u.alarma_temperatura ? ' alarma' : '');
+
+            // Charts
+            const rev = data.slice().reverse();
+            const labels = rev.map(d => d.timestamp.slice(11, 19));
+
+            chartVI.data.labels = labels;
+            chartVI.data.datasets[0].data = rev.map(d => d.voltaje);
+            chartVI.data.datasets[1].data = rev.map(d => d.corriente);
+            chartVI.update();
+
+            chartPT.data.labels = labels;
+            chartPT.data.datasets[0].data = rev.map(d => d.potencia);
+            chartPT.data.datasets[1].data = rev.map(d => d.temperatura);
+            chartPT.update();
+        })
+        .catch(e => console.error(e));
+}
+
+actualizarDashboard();
+setInterval(actualizarDashboard, 2000);
+
+// Historial de alarmas
+function actualizarAlarmas() {
+    fetch('/api/alarmas')
+        .then(r => r.json())
+        .then(data => {
+            const tbody = document.getElementById('alarm-tbody');
+            const count = document.getElementById('alarm-count');
+            count.textContent = data.length + ' EVENTOS';
+            if (!data.length) {
+                tbody.innerHTML = '<tr><td colspan="5" style="padding:16px;text-align:center;color:#768390;font-family:\'Share Tech Mono\',monospace;font-size:0.75rem;">Sin eventos registrados</td></tr>';
+                return;
+            }
+            tbody.innerHTML = data.map(d => {
+                const tipos = [];
+                if (d.alarma_voltaje) tipos.push('<span style="background:rgba(244,67,54,0.12);color:#f44336;padding:2px 8px;border-radius:2px;font-size:0.68rem;letter-spacing:1px;font-weight:700;">VOLTAJE</span>');
+                if (d.alarma_corriente) tipos.push('<span style="background:rgba(255,167,38,0.12);color:#ffa726;padding:2px 8px;border-radius:2px;font-size:0.68rem;letter-spacing:1px;font-weight:700;">CORRIENTE</span>');
+                if (d.alarma_temperatura) tipos.push('<span style="background:rgba(239,83,80,0.12);color:#ef5350;padding:2px 8px;border-radius:2px;font-size:0.68rem;letter-spacing:1px;font-weight:700;">TEMPERATURA</span>');
+                return `<tr style="border-bottom:1px solid rgba(99,130,167,0.07);" 
+                    onmouseover="this.style.background='rgba(99,130,167,0.04)'" 
+                    onmouseout="this.style.background='transparent'">
+                    <td style="padding:8px;color:#768390;font-family:'Share Tech Mono',monospace;font-size:0.72rem;">${d.timestamp}</td>
+                    <td style="padding:8px;text-align:center;color:#cdd9e5;font-family:'Share Tech Mono',monospace;font-size:0.8rem;">${d.voltaje.toFixed(1)}</td>
+                    <td style="padding:8px;text-align:center;color:#cdd9e5;font-family:'Share Tech Mono',monospace;font-size:0.8rem;">${d.corriente.toFixed(1)}</td>
+                    <td style="padding:8px;text-align:center;color:#cdd9e5;font-family:'Share Tech Mono',monospace;font-size:0.8rem;">${d.temperatura.toFixed(1)}</td>
+                    <td style="padding:8px;text-align:center;display:flex;gap:4px;justify-content:center;flex-wrap:wrap;">${tipos.join('')}</td>
+                </tr>`;
+            }).join('');
+        });
+}
+
+actualizarAlarmas();
+setInterval(actualizarAlarmas, 5000);
+</script>
+</body>
+</html>
