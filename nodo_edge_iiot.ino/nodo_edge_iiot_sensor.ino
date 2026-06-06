@@ -18,6 +18,13 @@
  *   PZEM RX  →  ESP32 GPIO17 (TX2)
  *   PZEM VCC →  ESP32 VIN (5V)
  *   PZEM GND →  ESP32 GND
+ *
+ * Procesamiento local (Edge):
+ *   - Filtrado de lecturas inválidas del sensor
+ *   - Detección local de alarmas sin depender del servidor
+ *   - Buffer circular de 20 muestras cuando no hay conexión MQTT
+ *   - Reenvío automático del buffer al reconectar
+ *   - LED de alarma activado localmente sin necesidad de red
  * ============================================================
  */
 
@@ -53,6 +60,49 @@ PZEM004Tv30 pzem(Serial2, 16, 17);
 WiFiClientSecure espClient;
 PubSubClient     mqttClient(espClient);
 
+// ─── Buffer local (Edge processing) ────────────────────────
+// Almacena hasta 20 muestras cuando no hay conexión MQTT
+#define BUFFER_SIZE 20
+String bufferLocal[BUFFER_SIZE];
+int    bufferHead  = 0;
+int    bufferCount = 0;
+
+void guardarEnBuffer(const char* payload) {
+    bufferLocal[bufferHead] = String(payload);
+    bufferHead = (bufferHead + 1) % BUFFER_SIZE;
+    if (bufferCount < BUFFER_SIZE) bufferCount++;
+    Serial.printf("[BUFFER] %d/%d muestras almacenadas localmente\n",
+                  bufferCount, BUFFER_SIZE);
+}
+
+void vaciarBuffer() {
+    if (bufferCount == 0) return;
+    int inicio = (bufferHead - bufferCount + BUFFER_SIZE) % BUFFER_SIZE;
+    Serial.printf("[BUFFER] Enviando %d muestras almacenadas...\n", bufferCount);
+    for (int i = 0; i < bufferCount; i++) {
+        int idx = (inicio + i) % BUFFER_SIZE;
+        mqttClient.publish(MQTT_TOPIC, bufferLocal[idx].c_str());
+        delay(100);
+    }
+    bufferCount = 0;
+    bufferHead  = 0;
+    Serial.println("[BUFFER] Buffer vaciado correctamente");
+}
+
+// ─── Filtro de lecturas (Edge processing) ───────────────────
+// Promedio móvil de las últimas 3 lecturas válidas
+#define FILTRO_N 3
+float filtroVoltaje[FILTRO_N]   = {220, 220, 220};
+float filtroCorriente[FILTRO_N] = {0, 0, 0};
+int   filtroIdx = 0;
+
+float aplicarFiltro(float* arr, float nuevo) {
+    arr[filtroIdx % FILTRO_N] = nuevo;
+    float suma = 0;
+    for (int i = 0; i < FILTRO_N; i++) suma += arr[i];
+    return suma / FILTRO_N;
+}
+
 // ─── Portal Cautivo ─────────────────────────────────────────
 void iniciarPortalCautivo() {
     WiFiManager wifiManager;
@@ -64,7 +114,6 @@ void iniciarPortalCautivo() {
         Serial.println("  Contrasena: nodo1234");
         Serial.println("  IP portal:  192.168.4.1");
         Serial.println("==============================");
-        // Parpadeo rapido = portal activo
         for (int i = 0; i < 20; i++) {
             digitalWrite(LED_WIFI, HIGH); delay(100);
             digitalWrite(LED_WIFI, LOW);  delay(100);
@@ -103,42 +152,55 @@ void conectarMQTT() {
     mqttClient.setServer(MQTT_HOST, MQTT_PORT);
     mqttClient.setBufferSize(512);
 
-    while (!mqttClient.connected()) {
+    int intentos = 0;
+    while (!mqttClient.connected() && intentos < 5) {
         Serial.print("Conectando a HiveMQ...");
         if (mqttClient.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS)) {
             Serial.println("Conectado");
             digitalWrite(LED_MQTT, HIGH);
+            vaciarBuffer(); // reenviar muestras almacenadas
         } else {
-            Serial.print("Error: ");
-            Serial.println(mqttClient.state());
+            Serial.printf("Error: %d — reintento %d/5\n",
+                          mqttClient.state(), ++intentos);
             digitalWrite(LED_MQTT, LOW);
             delay(3000);
         }
     }
 }
 
-// ─── Leer PZEM y publicar ───────────────────────────────────
-void leerYPublicar() {
+// ─── Leer PZEM, filtrar y publicar ──────────────────────────
+void leerFiltrarYPublicar() {
     // Leer sensor
-    float voltaje         = pzem.voltage();
-    float corriente       = pzem.current();
-    float potencia        = pzem.power();
-    float energia         = pzem.energy();
-    float frecuencia      = pzem.frequency();
-    float factor_potencia = pzem.pf();
+    float voltajeBruto   = pzem.voltage();
+    float corrienteBruta = pzem.current();
+    float potencia       = pzem.power();
+    float energia        = pzem.energy();
+    float frecuencia     = pzem.frequency();
+    float factorPotencia = pzem.pf();
 
-    // Verificar lectura valida
-    if (isnan(voltaje) || isnan(corriente)) {
+    // Verificar lectura válida — procesamiento local
+    if (isnan(voltajeBruto) || isnan(corrienteBruta)) {
         Serial.println("[ERROR] Sensor no responde — verifica conexiones PZEM-004T");
         digitalWrite(LED_ALARMA, HIGH);
-        delay(500);
+        delay(200);
         digitalWrite(LED_ALARMA, LOW);
         return;
     }
 
-    // Alarma si hay sobretemperatura o sobrevoltaje
-    bool alarma = (voltaje > 228.0 || corriente > 5.0);
+    // Aplicar filtro promedio móvil — reduce ruido del sensor
+    float voltaje   = aplicarFiltro(filtroVoltaje,   voltajeBruto);
+    float corriente = aplicarFiltro(filtroCorriente, corrienteBruta);
+    filtroIdx++;
+
+    // Detección local de alarmas — sin depender del servidor
+    bool alarmaVoltaje   = (voltaje   > 228.0);
+    bool alarmaCorreinte = (corriente > 5.0);
+    bool alarma          = alarmaVoltaje || alarmaCorreinte;
     digitalWrite(LED_ALARMA, alarma ? HIGH : LOW);
+
+    if (alarma) {
+        Serial.printf("[ALARMA LOCAL] V=%.1f I=%.2f\n", voltaje, corriente);
+    }
 
     // Timestamp NTP
     struct tm timeinfo;
@@ -147,21 +209,27 @@ void leerYPublicar() {
         strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeinfo);
     }
 
-    // JSON
+    // Construir JSON
     StaticJsonDocument<256> doc;
-    doc["voltaje"]         = round(voltaje         * 10)   / 10.0;
-    doc["corriente"]       = round(corriente        * 100)  / 100.0;
-    doc["potencia"]        = round(potencia         * 10)   / 10.0;
-    doc["energia"]         = round(energia          * 100)  / 100.0;
-    doc["frecuencia"]      = round(frecuencia       * 10)   / 10.0;
-    doc["factor_potencia"] = round(factor_potencia  * 1000) / 1000.0;
+    doc["voltaje"]         = round(voltaje       * 10)   / 10.0;
+    doc["corriente"]       = round(corriente      * 100)  / 100.0;
+    doc["potencia"]        = round(potencia       * 10)   / 10.0;
+    doc["energia"]         = round(energia        * 100)  / 100.0;
+    doc["frecuencia"]      = round(frecuencia     * 10)   / 10.0;
+    doc["factor_potencia"] = round(factorPotencia * 1000) / 1000.0;
     doc["estado_motor"]    = (corriente > 0.5) ? 1 : 0;
     doc["timestamp"]       = timeStr;
 
     char buffer[256];
     serializeJson(doc, buffer);
-    mqttClient.publish(MQTT_TOPIC, buffer);
-    Serial.println(buffer);
+
+    // Publicar o guardar en buffer local
+    if (mqttClient.connected()) {
+        mqttClient.publish(MQTT_TOPIC, buffer);
+        Serial.println(buffer);
+    } else {
+        guardarEnBuffer(buffer);
+    }
 }
 
 // ─── Setup ──────────────────────────────────────────────────
@@ -178,6 +246,7 @@ void setup() {
     Serial.println("\n============================");
     Serial.println("  NODO EDGE IIoT — PRODUCCION");
     Serial.println("  Sensor: PZEM-004T");
+    Serial.println("  Edge: filtro + buffer local");
     Serial.println("============================");
 
     iniciarPortalCautivo();
@@ -196,6 +265,6 @@ void loop() {
         conectarMQTT();
     }
     mqttClient.loop();
-    leerYPublicar();
+    leerFiltrarYPublicar();
     delay(2000);
 }
